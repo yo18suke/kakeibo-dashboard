@@ -554,7 +554,8 @@ function computeBuddy() {
       "記録が続いてるね。見える化できてるだけで前進だよ🌱"
     ];
   }
-  if (sumOf(DATA.recs) >= MISSION.threshold) msgs.unshift("ミッション発動！とばっちに家を買う時が来たよ🏠🎉");
+  const firedMs = MISSIONS.filter(m => sumOf(DATA.recs) >= m.threshold);
+  if (firedMs.length) msgs.unshift(firedMs[firedMs.length - 1].buddy);
   if (weekUsed === 0 && state !== "care") msgs.unshift("今週はまだ記録がないよ。最初の一件を入れたら週の予算が見えてくるよ📝");
   return { state, msgs };
 }
@@ -597,26 +598,33 @@ function renderTabs() {
   }));
 }
 
-const MISSION = { threshold: 1000000, title: "とばっちに家を買う" };
-function missionCard() {
-  const total = sumOf(DATA.recs);
-  const fired = total >= MISSION.threshold;
-  if (fired) {
-    return '<div class="card mission fired"><div class="m-house">🏠</div>' +
-      '<div class="m-title">🚨 ミッション発動！「' + MISSION.title + '」</div>' +
-      '<div class="m-body">累計の出費が ' + yen(total) + ' になり、' + yen(MISSION.threshold) + ' を超えました。約束どおり、とばっちに家を買う時が来ました。</div></div>';
+const MISSIONS = [
+  { threshold: 1000000, title: "とばっちに家を買う", icon: "🏠", fired: "約束どおり、とばっちに家を買う時が来ました。", buddy: "ミッション発動！とばっちに家を買う時が来たよ🏠🎉" },
+  { threshold: 1500000, title: "とばっちに馬を買う", icon: "🐴", fired: "約束どおり、とばっちに馬を買う時が来ました。", buddy: "ミッション発動！とばっちに馬を買う時が来たよ🐴🎉" }
+];
+function missionCard(m, total) {
+  if (total >= m.threshold) {
+    return '<div class="card mission fired"><div class="m-house">' + m.icon + '</div>' +
+      '<div class="m-title">🚨 ミッション発動！「' + m.title + '」</div>' +
+      '<div class="m-body">累計の出費が ' + yen(total) + ' になり、' + yen(m.threshold) + ' を超えました。' + m.fired + '</div></div>';
   }
-  const pct = Math.min(100, total / MISSION.threshold * 100);
-  return '<div class="card mission"><div class="m-head"><div class="m-title">🏠 ミッション：' + MISSION.title + '</div>' +
-    '<div class="m-val">発動まで あと ' + yen(MISSION.threshold - total) + '</div></div>' +
+  const pct = Math.min(100, total / m.threshold * 100);
+  return '<div class="card mission"><div class="m-head"><div class="m-title">' + m.icon + ' ミッション：' + m.title + '</div>' +
+    '<div class="m-val">発動まで あと ' + yen(m.threshold - total) + '</div></div>' +
     '<div class="track"><div style="width:' + pct + '%"></div></div>' +
-    '<div class="cap">累計の出費 ' + yen(total) + ' / ' + yen(MISSION.threshold) + '（' + pct.toFixed(1) + '%）。超えたらミッション発動！</div></div>';
+    '<div class="cap">累計の出費 ' + yen(total) + ' / ' + yen(m.threshold) + '（' + pct.toFixed(1) + '%）。超えたらミッション発動！</div></div>';
+}
+// 発動済みのミッションと、次に狙うミッション1つを表示
+function missionCards() {
+  const total = sumOf(DATA.recs);
+  const next = MISSIONS.find(m => total < m.threshold);
+  return MISSIONS.filter(m => total >= m.threshold || m === next).map(m => missionCard(m, total)).join("");
 }
 
 function render() {
   renderTabs();
   if (selected === 'all') renderAll(); else renderMonth(selected);
-  document.getElementById("app").insertAdjacentHTML("afterbegin", missionCard());
+  document.getElementById("app").insertAdjacentHTML("afterbegin", missionCards());
   renderBuddy();
   const now = new Date();
   document.getElementById("fetched").textContent = "データ取得：" + (now.getMonth() + 1) + "/" + now.getDate() + " " + pad(now.getHours()) + ":" + pad(now.getMinutes()) + "（全" + DATA.recs.length + "件）";
