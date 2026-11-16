@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>家計簿爆発</title>
+<style>
+  :root{ --bg:#faf6ee; --card:#fff; --ink:#22303e; --sub:#8a7f6a; --line:#e7ddcb; --salmon:#da7057; --navy:#35536f; --warn:#bf3b2b; }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{background:var(--bg); color:var(--ink); font-family:"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif; overflow:hidden; position:relative;}
+  .stage{max-width:520px; margin:0 auto; padding:28px 16px; position:relative;}
+  h1{font-family:"Hiragino Mincho ProN","Yu Mincho",serif; font-size:26px;}
+  .fetched{color:var(--sub); font-size:12.5px; margin:4px 0 14px;}
+  .piece{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:12px; will-change:transform,opacity;}
+  .total .t{font-size:13px; color:var(--sub);}
+  .total .v{font-family:"Hiragino Mincho ProN",serif; font-size:34px; font-weight:700;}
+  .rec{display:flex; gap:8px; align-items:baseline; font-size:14px; padding:6px 0; border-bottom:1px solid var(--line);}
+  .rec:last-child{border-bottom:none;}
+  .rec .chip{background:#f3ecdd; border-radius:5px; padding:1px 7px; font-size:12px;}
+  .rec .nm{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .rec .amt{font-weight:700;}
+  #count{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; font-size:140px; font-weight:900; color:var(--warn); pointer-events:none; z-index:20; text-shadow:0 4px 0 #fff;}
+  #flash{position:fixed; inset:0; background:#fff7d6; opacity:0; pointer-events:none; z-index:30;}
+  .spark{position:fixed; z-index:25; pointer-events:none; font-size:28px; will-change:transform,opacity;}
+  #after{position:fixed; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:14px; z-index:15; text-align:center; padding:20px;}
+  #after .big{font-family:"Hiragino Mincho ProN",serif; font-size:30px; font-weight:700;}
+  #after .small{font-size:14px; color:var(--sub); line-height:1.7;}
+  #after button{padding:10px 24px; background:var(--navy); color:#fff; border:none; border-radius:8px; font-size:15px; font-weight:700; cursor:pointer;}
+  .shake{animation:shake .08s infinite;}
+  @keyframes shake{0%{transform:translate(0,0)}25%{transform:translate(-5px,3px) rotate(-.4deg)}50%{transform:translate(4px,-4px) rotate(.4deg)}75%{transform:translate(-3px,-3px)}100%{transform:translate(0,0)}}
+  @media (prefers-reduced-motion: reduce){ .shake{animation:none;} }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <h1>家計簿ダッシュボード</h1>
+  <div class="fetched" id="fetched">読み込み中…</div>
+  <div id="pieces"></div>
+</div>
+<div id="count"></div>
+<div id="flash"></div>
+<div id="after">
+  <div class="big">💥 家計簿は爆発しました</div>
+  <div class="small">今月の出費も、見なかったことに。<br>（データは無事です。スプレッドシートは爆発していません）</div>
+  <button id="again">もう一度爆発させる</button>
+</div>
+<script>
+const SHEET_ID = "1qbglQTSzy5kGz3-nZnGTn-zq_NlNjd4Y2MbrCMWXSmU";
+const yen = n => "¥" + Math.round(n).toLocaleString("ja-JP");
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const wait = ms => new Promise(r => setTimeout(r, ms));
+let busy = false;
+
+async function loadRecs() {
+  const url = "https://docs.google.com/spreadsheets/d/" + SHEET_ID + "/gviz/tq?tqx=out:json&sheet=" + encodeURIComponent("記録");
+  const res = await fetch(url);
+  const text = await res.text();
+  const json = JSON.parse(text.substring(text.indexOf("{"), text.lastIndexOf("}") + 1));
+  const recs = [];
+  for (const row of json.table.rows) {
+    const c = row.c;
+    if (!c || !c[0] || !c[0].v) continue;
+    const m = /^Date\((\d+),(\d+),(\d+)\)/.exec(String(c[0].v));
+    if (!m) continue;
+    recs.push({ date: new Date(+m[1], +m[2], +m[3]), item: c[1] ? (c[1].v || "") : "", name: c[2] ? (c[2].v || "") : "", amount: c[4] ? (+c[4].v || 0) : 0 });
+  }
+  recs.sort((a, b) => a.date - b.date);
+  return recs;
+}
+
+function build(recs, live) {
+  const total = recs.reduce((a, r) => a + r.amount, 0);
+  const rows = recs.slice(-6).reverse().map(r =>
+    '<div class="rec"><span>' + (r.date.getMonth() + 1) + '/' + r.date.getDate() + '</span><span class="chip">' + esc(r.item) +
+    '</span><span class="nm">' + esc(r.name || "（名称なし）") + '</span><span class="amt">' + yen(r.amount) + '</span></div>').join("");
+  document.getElementById("pieces").innerHTML =
+    '<div class="piece total"><div class="t">総支出（全期間）</div><div class="v">' + yen(total) + '</div></div>' +
+    '<div class="piece"><div class="t" style="font-size:13px;color:var(--sub);margin-bottom:6px">直近の記録</div>' + rows + '</div>';
+  const now = new Date();
+  document.getElementById("fetched").textContent = (live ? "データ取得：" : "シートを読めなかったのでサンプル表示：") + (now.getMonth() + 1) + "/" + now.getDate() + "（全" + recs.length + "件）";
+}
+
+const SAMPLE = [
+  { date: new Date(), item: "食料品", name: "スーパー", amount: 4280 },
+  { date: new Date(), item: "日用品", name: "ドラッグストア", amount: 2310 },
+  { date: new Date(), item: "外食", name: "ラーメン", amount: 1200 }
+];
+
+function sparks(x, y) {
+  const em = ["💥", "🔥", "💸", "✨", "💴", "⭐"];
+  for (let i = 0; i < 28; i++) {
+    const el = document.createElement("div");
+    el.className = "spark";
+    el.textContent = em[i % em.length];
+    el.style.left = x + "px"; el.style.top = y + "px";
+    document.body.appendChild(el);
+    const a = Math.random() * Math.PI * 2, d = 120 + Math.random() * 360;
+    el.animate([
+      { transform: "translate(-50%,-50%) scale(.4)", opacity: 1 },
+      { transform: "translate(calc(-50% + " + Math.cos(a) * d + "px), calc(-50% + " + (Math.sin(a) * d + 120) + "px)) rotate(" + (Math.random() * 720 - 360) + "deg) scale(1.3)", opacity: 0 }
+    ], { duration: 900 + Math.random() * 700, easing: "cubic-bezier(.1,.7,.3,1)" }).onfinish = () => el.remove();
+  }
+}
+
+async function explode() {
+  if (busy) return; busy = true;
+  document.getElementById("after").style.display = "none";
+  const stage = document.getElementById("stage");
+  const count = document.getElementById("count");
+  for (const n of ["3", "2", "1"]) {
+    count.textContent = n;
+    stage.classList.add("shake");
+    await wait(850);
+  }
+  count.textContent = "";
+  stage.classList.remove("shake");
+  const flash = document.getElementById("flash");
+  flash.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 450 });
+  const pieces = [...document.querySelectorAll(".piece, h1, .fetched")];
+  pieces.forEach(el => {
+    const r = el.getBoundingClientRect();
+    sparks(r.left + r.width / 2, r.top + r.height / 2);
+    const dx = (Math.random() - .5) * innerWidth * 1.6, dy = (Math.random() - .3) * innerHeight * 1.6, rot = (Math.random() - .5) * 900;
+    el.animate([
+      { transform: "none", opacity: 1 },
+      { transform: "translate(" + dx + "px," + dy + "px) rotate(" + rot + "deg) scale(.5)", opacity: 0 }
+    ], { duration: reduce ? 300 : 1100, easing: "cubic-bezier(.2,.8,.3,1)", fill: "forwards" });
+  });
+  await wait(reduce ? 400 : 1300);
+  document.getElementById("after").style.display = "flex";
+  busy = false;
+}
+
+async function start() {
+  let recs, live = true;
+  try { recs = await loadRecs(); if (!recs.length) throw 0; } catch (e) { recs = SAMPLE; live = false; }
+  // 再構築時はアニメーションの残りを消すためDOMを作り直す
+  document.getElementById("stage").innerHTML = '<h1>家計簿ダッシュボード</h1><div class="fetched" id="fetched"></div><div id="pieces"></div>';
+  build(recs, live);
+  explode();
+}
+document.getElementById("again").addEventListener("click", start);
+start();
+</script>
+</body>
+</html>
