@@ -151,6 +151,23 @@ async function fetchTab(sheetName) {
   return JSON.parse(text.substring(text.indexOf("{"), text.lastIndexOf("}") + 1));
 }
 
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQ) {
+      if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === ',') { row.push(field); field = ''; }
+    else if (ch === '\n') { row.push(field); field = ''; rows.push(row); row = []; }
+    else if (ch !== '\r') field += ch;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
 async function load() {
   const json = await fetchTab("記録");
   const recs = [];
@@ -175,13 +192,14 @@ async function load() {
   } catch (e) {}
   let settled = {};
   try {
-    const sj = await fetchTab("サマリー");
-    const rows = sj.table.rows.map(r => (r.c || []).map(c => !c ? null : (typeof c.v === 'boolean' ? c.v : (c.f != null ? c.f : c.v))));
+    const res = await fetch("https://docs.google.com/spreadsheets/d/" + SHEET_ID + "/export?format=csv&gid=1");
+    const csv = await res.text();
+    const rows = parseCSV(csv);
     const si = rows.findIndex(r => r[0] === '精算済み');
     if (si >= 0) {
       let header = null;
-      for (let i = si - 1; i >= 0; i--) { if (rows[i][1] && /^\d{4}-\d{2}$/.test(String(rows[i][1]))) { header = rows[i]; break; } }
-      if (header) rows[si].forEach((v, j) => { if (j >= 1 && header[j]) settled[String(header[j])] = (v === true || String(v).toUpperCase() === 'TRUE'); });
+      for (let i = si - 1; i >= 0; i--) { if (rows[i][1] && /^\d{4}-\d{2}$/.test(rows[i][1])) { header = rows[i]; break; } }
+      if (header) rows[si].forEach((v, j) => { if (j >= 1 && header[j]) settled[header[j]] = (String(v).toUpperCase() === 'TRUE'); });
     }
   } catch (e) {}
   return { recs, reviews, settled };
