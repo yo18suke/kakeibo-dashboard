@@ -140,12 +140,10 @@ function mondayOf(d) {
 }
 function fmtWan(v) {
   if (v <= 0) return "";
-  if (v >= 10000) { const x = v / 10000; return (Math.round(x * 10) / 10).toString().replace(/\.0$/, "") + "万"; }
-  const x = v / 1000; return (Math.round(x * 10) / 10).toString().replace(/\.0$/, "") + "千";
+  return v.toLocaleString("ja-JP");
 }
 
 async function fetchTab(sheetName) {
-  const url = "https://docs.google.com/spreadsheets/d/" + SHEET_ID + "/gviz/tq?tqx=out:json&sheet=" + encodeURIComponent(sheetName);
   const res = await fetch(url);
   const text = await res.text();
   return JSON.parse(text.substring(text.indexOf("{"), text.lastIndexOf("}") + 1));
