@@ -458,27 +458,27 @@ function computeBuddy() {
   if (weekRemain < 0 || paceOver) {
     state = "care";
     msgs = [
-      "今週は予算を超えたけど、記録して見える化できてるのが大事だよ",
-      "ペースは少し速めだね。でも早めに気づけたのが大きいよ。日用品の月末見込みは " + yen(dailyProj) + " だよ",
-      "節約がんばってくれてありがとう。無理のない範囲でいこ"
+      "今週は予算を超えたけど、記録して見える化できてるのが大事だよ📝",
+      "ペースは少し速めだね。でも早めに気づけたのが大きいよ👀 日用品の月末見込みは " + yen(dailyProj) + " だよ",
+      "節約がんばってくれてありがとう🌷 無理のない範囲でいこ"
     ];
-    if (weekRemain >= 0) msgs[0] = "今週は残り " + yen(weekRemain) + "。あと" + daysLeft + "日、ゆっくりペースでいこ";
+    if (weekRemain >= 0) msgs[0] = "今週は残り " + yen(weekRemain) + "。あと" + daysLeft + "日、ゆっくりペースでいこ🐢";
   } else if (weekRemain >= weekBudget * 0.3) {
     state = "good";
     msgs = [
-      "今週は残り " + yen(weekRemain) + "！いいペースだね、その調子！",
-      "今月は食料品が残り " + yen(foodRemain) + "、日用品が残り " + yen(dailyRemain) + "。がんばりが数字に見えてるよ",
-      "おつかれさま！無理なく続いてるのが一番すごいよ"
+      "今週は残り " + yen(weekRemain) + "！いいペースだね、その調子！🎉",
+      "今月は食料品が残り " + yen(foodRemain) + "、日用品が残り " + yen(dailyRemain) + "。がんばりが数字に見えてるよ✨",
+      "おつかれさま！🍵 無理なく続いてるのが一番すごいよ"
     ];
   } else {
     state = "normal";
     msgs = [
-      "今週は残り " + yen(weekRemain) + " だよ。あと" + daysLeft + "日、1日あたり約 " + yen(Math.max(0, Math.floor(weekRemain / daysLeft))) + " が目安だね",
-      "今月は食料品が残り " + yen(foodRemain) + "、日用品が残り " + yen(dailyRemain) + " だよ",
-      "記録が続いてるね。見える化できてるだけで前進だよ"
+      "今週は残り " + yen(weekRemain) + " だよ。あと" + daysLeft + "日、1日あたり約 " + yen(Math.max(0, Math.floor(weekRemain / daysLeft))) + " が目安だね🧮",
+      "今月は食料品が残り " + yen(foodRemain) + "、日用品が残り " + yen(dailyRemain) + " だよ📊",
+      "記録が続いてるね。見える化できてるだけで前進だよ🌱"
     ];
   }
-  if (weekUsed === 0 && state !== "care") msgs.unshift("今週はまだ記録がないよ。最初の一件を入れたら週の予算が見えてくるよ");
+  if (weekUsed === 0 && state !== "care") msgs.unshift("今週はまだ記録がないよ。最初の一件を入れたら週の予算が見えてくるよ📝");
   return { state, msgs };
 }
 
