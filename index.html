@@ -173,10 +173,21 @@ async function load() {
     const rj = await fetchTab("振り返り");
     reviews = rj.table.rows.map(r => (r.c || []).map(c => c ? (c.f || c.v || "") : ""));
   } catch (e) {}
-  return { recs, reviews };
+  let settled = {};
+  try {
+    const sj = await fetchTab("サマリー");
+    const rows = sj.table.rows.map(r => (r.c || []).map(c => !c ? null : (typeof c.v === 'boolean' ? c.v : (c.f != null ? c.f : c.v))));
+    const si = rows.findIndex(r => r[0] === '精算済み');
+    if (si >= 0) {
+      let header = null;
+      for (let i = si - 1; i >= 0; i--) { if (rows[i][1] && /^\d{4}-\d{2}$/.test(String(rows[i][1]))) { header = rows[i]; break; } }
+      if (header) rows[si].forEach((v, j) => { if (j >= 1 && header[j]) settled[String(header[j])] = (v === true || String(v).toUpperCase() === 'TRUE'); });
+    }
+  } catch (e) {}
+  return { recs, reviews, settled };
 }
 
-let DATA = { recs: [], reviews: [] };
+let DATA = { recs: [], reviews: [], settled: {} };
 let selected = null;
 const sumOf = arr => arr.reduce((a, r) => a + r.amount, 0);
 function groupBy(arr, keyFn) {
@@ -204,15 +215,16 @@ function last10Weeks(recs, item) {
   return weeks;
 }
 
-function monthWeeks(mRecs, item, mk) {
+function monthWeeks(mRecs, item) {
   const map = new Map();
   for (const r of mRecs) {
     if (r.item !== item) continue;
     const k = fmtDate(mondayOf(r.date));
     map.set(k, (map.get(k) || 0) + r.amount);
   }
+  const curKey = fmtDate(mondayOf(new Date()));
   return [...map.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1)
-    .map(([k, v]) => ({ start: new Date(k + "T00:00:00"), key: k, amount: v, isCurrent: false }));
+    .map(([k, v]) => ({ start: new Date(k + "T00:00:00"), key: k, amount: v, isCurrent: k === curKey }));
 }
 
 function chartSVG(weeks, weeklyBudget) {
@@ -244,19 +256,20 @@ function chartSVG(weeks, weeklyBudget) {
 }
 
 function weekCard(item, weeklyTarget, mRecs, isCurrentView, mk) {
-  let weeks, sub, remain;
+  const weeks = monthWeeks(mRecs, item);
+  let sub, remain = null, pct = 0;
   if (isCurrentView) {
-    weeks = last10Weeks(DATA.recs, item);
-    const cur = weeks[weeks.length - 1];
-    const end = new Date(cur.start); end.setDate(end.getDate() + 6);
-    sub = '今週（' + fmtMD(cur.start) + '〜' + fmtMD(end) + '）：' + yen(cur.amount) + ' / 週予算 ' + yen(weeklyTarget);
-    remain = weeklyTarget - cur.amount;
+    const curKey = fmtDate(mondayOf(new Date()));
+    const curAmt = sumOf(DATA.recs.filter(r => r.item === item && fmtDate(mondayOf(r.date)) === curKey));
+    if (!weeks.some(w => w.key === curKey)) weeks.push({ start: mondayOf(new Date()), key: curKey, amount: 0, isCurrent: true });
+    weeks.sort((a, b) => a.key < b.key ? -1 : 1);
+    const cs = mondayOf(new Date()); const end = new Date(cs); end.setDate(end.getDate() + 6);
+    sub = '今週（' + fmtMD(cs) + '〜' + fmtMD(end) + '）：' + yen(curAmt) + ' / 週予算 ' + yen(weeklyTarget);
+    remain = weeklyTarget - curAmt;
+    pct = Math.min(100, (curAmt / weeklyTarget) * 100);
   } else {
-    weeks = monthWeeks(mRecs, item, mk);
     sub = mk.split('-').map(Number)[1] + '月の週別実績';
-    remain = null;
   }
-  const pct = isCurrentView ? Math.min(100, (weeks[weeks.length - 1].amount / weeklyTarget) * 100) : 0;
   return '<div class="card"><div class="weekhead"><div class="name">' + item + '</div>' +
     (remain !== null ? '<div class="remain">あと ' + yen(remain) + '</div>' : '') + '</div>' +
     '<div class="weeksub">' + sub + '</div>' +
@@ -265,16 +278,27 @@ function weekCard(item, weeklyTarget, mRecs, isCurrentView, mk) {
     '<div class="chartcap">朱色の棒は週（月曜開始）の実績、破線は週予算 ' + yen(weeklyTarget) + '。棒が線を超えた週が予算オーバーです。予算は2026年11月から設定のため、それ以前の週に線はありません。枠付きは今週。</div></div>';
 }
 
-function settleBlock(byPayer, label) {
+function settleBlock(byPayer, label, noteOverride) {
   const payers = Object.keys(byPayer);
   if (payers.length < 2) return "";
   const sorted = payers.slice().sort((a, b) => byPayer[b] - byPayer[a]);
   const hi = sorted[0], lo = sorted[1], diff = byPayer[hi] - byPayer[lo];
   const payerLine = payers.slice().sort((a, b) => byPayer[b] - byPayer[a]).map(p => p + ' ' + yen(byPayer[p])).join(' ／ ');
   if (diff === 0) return '<div class="settle"><div class="s-title">立て替えの精算（' + label + '）</div><div class="s-big">精算は不要</div><div class="s-note">内訳：' + payerLine + '</div></div>';
+  const note = noteOverride ? noteOverride + '<br>内訳：' + payerLine : hi + 'の方が ' + yen(diff) + ' 多く立て替えているため、折半すると' + lo + 'が' + hi + 'に ' + yen(Math.round(diff / 2)) + ' 払います。<br>内訳：' + payerLine + '（支払元別合計を折半して計算）';
   return '<div class="settle"><div class="s-title">立て替えの精算（' + label + '）</div>' +
     '<div class="s-big">' + lo + ' → ' + hi + ' へ ' + yen(Math.round(diff / 2)) + '</div>' +
-    '<div class="s-note">' + hi + 'の方が ' + yen(diff) + ' 多く立て替えているため、折半すると' + lo + 'が' + hi + 'に ' + yen(Math.round(diff / 2)) + ' 払います。<br>内訳：' + payerLine + '（支払元別合計を折半して計算）</div></div>';
+    '<div class="s-note">' + note + '</div></div>';
+}
+
+function monthSettleBlock(mk, byPayer, isCurrentView) {
+  const mo = mk.split('-').map(Number)[1];
+  const label = isCurrentView ? '今月分' : mo + '月分';
+  if (DATA.settled && DATA.settled[mk]) {
+    const payerLine = Object.entries(byPayer).sort((a, b) => b[1] - a[1]).map(([p, v]) => p + ' ' + yen(v)).join(' ／ ');
+    return '<div class="settle"><div class="s-title">立て替えの精算（' + label + '）</div><div class="s-big">精算済み</div><div class="s-note">スプレッドシートで精算済みになっています。内訳：' + payerLine + '</div></div>';
+  }
+  return settleBlock(byPayer, label);
 }
 
 function breakdownCard(mRecs, mk, isCurrentView) {
@@ -299,7 +323,7 @@ function breakdownCard(mRecs, mk, isCurrentView) {
   const payerLine = Object.entries(byPayer).sort((a, b) => b[1] - a[1]).map(([p, v]) => p + ' ' + yen(v)).join(' ／ ');
   return '<div class="card"><div class="totalrow"><div class="t">総支出</div><div class="v">' + yen(total) + '</div></div>' + prevNote + hbars +
     '<div class="payerline">支払元：' + payerLine + '</div>' +
-    settleBlock(byPayer, isCurrentView ? '今月分' : mo + '月分') + '</div>';
+    monthSettleBlock(mk, byPayer, isCurrentView) + '</div>';
 }
 
 function trendCard() {
@@ -445,9 +469,7 @@ function allWeeksChart() {
     else s += '<circle cx="' + X(i).toFixed(1) + '" cy="' + (Y(0) - 2).toFixed(1) + '" r="2.4" fill="#8a7f6a"/>';
     s += '<text x="' + X(i).toFixed(1) + '" y="' + (H - 7) + '" font-size="11.5" fill="' + (w.isCurrent ? '#22303e' : '#8a7f6a') + '" font-weight="' + (w.isCurrent ? '700' : '400') + '" text-anchor="middle">' + fmtMD(w.start) + '</text>';
   });
-  const bpts = []; weeks.forEach((w, i) => { if (w.key >= BUDGET_START) bpts.push(i); });
-  if (bpts.length) s += '<line x1="' + (X(bpts[0]) - bw * 0.3).toFixed(1) + '" y1="' + Y(budget).toFixed(1) + '" x2="' + (X(bpts[bpts.length - 1]) + bw * 0.3).toFixed(1) + '" y2="' + Y(budget).toFixed(1) + '" stroke="var(--blue)" stroke-width="2.2" stroke-dasharray="6 5"/>';
-  const avgPts = [];
+const avgPts = [];
   weeks.forEach((w, i) => {
     if (i < 3) return;
     const avg = (weeks[i].total + weeks[i - 1].total + weeks[i - 2].total + weeks[i - 3].total) / 4;
@@ -455,13 +477,19 @@ function allWeeksChart() {
   });
   if (avgPts.length > 1) s += '<polyline points="' + avgPts.join(' ') + '" fill="none" stroke="var(--navy)" stroke-width="2.4"/>';
   return '<h2 class="sec">週次の推移（直近3ヶ月）</h2><div class="card"><svg class="chart" viewBox="0 0 ' + W + ' ' + H + '">' + s + '</svg>' +
-    '<div class="chartcap">朱色＝食料品、青＝日用品の積み上げ（ラベルは合計）。紺の実線は4週平均、破線は週予算の合計 ' + yen(budget) + '（2026年11月以降）。</div></div>';
+    '<div class="chartcap">朱色＝食料品、青＝日用品の積み上げ（ラベルは合計）。紺の実線は4週平均です。</div></div>';
 }
 
 function renderAll() {
   document.getElementById("title").textContent = '家計簿ダッシュボード（全体）';
   const byItem = groupBy(DATA.recs, r => r.item);
   const byPayer = groupBy(DATA.recs, r => r.payer);
+  const unsettledRecs = DATA.recs.filter(r => !(DATA.settled && DATA.settled[monthKey(r.date)]));
+  const byPayerU = groupBy(unsettledRecs, r => r.payer);
+  const settledMonths = Object.keys(DATA.settled || {}).filter(k => DATA.settled[k] && DATA.recs.some(r => monthKey(r.date) === k)).sort().map(k => k.split('-').map(Number)[1] + '月').join('・');
+  const settleNote = settledMonths ? '精算済みの月（' + settledMonths + '）は除いた、未精算分だけの計算です。' : '';
+  const settleHtml = unsettledRecs.length ? settleBlock(byPayerU, '未精算分', settleNote)
+    : '<div class="settle"><div class="s-title">立て替えの精算（未精算分）</div><div class="s-big">すべて精算済みです</div></div>';
   const maxItem = Math.max(...Object.values(byItem), 1);
   const hbars = Object.entries(byItem).sort((a, b) => b[1] - a[1]).map(([k, v]) =>
     '<div class="hbar-row"><div class="r1"><span>' + k + '</span><span>' + yen(v) + '</span></div><div class="track"><div style="width:' + (v / maxItem * 100) + '%"></div></div></div>').join("");
@@ -469,7 +497,7 @@ function renderAll() {
     trendCard() + allWeeksChart() +
     '<h2 class="sec">全期間の内訳</h2><div class="card"><div class="totalrow"><div class="t">総支出（全期間）</div><div class="v">' + yen(sumOf(DATA.recs)) + '</div></div>' + hbars +
     '<div class="payerline">支払元：' + Object.entries(byPayer).sort((a, b) => b[1] - a[1]).map(([p, v]) => p + ' ' + yen(v)).join(' ／ ') + '</div>' +
-    settleBlock(byPayer, '全期間') + '</div>' +
+    settleHtml + '</div>' +
     recordsCard(DATA.recs, 12);
 }
 
