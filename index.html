@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>家計簿ダッシュボード</title>
+<style>
+  :root{
+    --bg:#faf7f2; --card:#ffffff; --ink:#26221d; --sub:#7a7264;
+    --red:#e4572e; --blue:#2563eb; --line:#e8e0d2; --good:#1d7a4f; --warn:#c2410c;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{background:var(--bg); color:var(--ink); font-family:"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif; padding:20px 16px 48px;}
+  .wrap{max-width:880px; margin:0 auto;}
+  header{display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:4px;}
+  h1{font-size:26px; letter-spacing:.04em;}
+  .updated{color:var(--sub); font-size:12px;}
+  .lead{color:var(--sub); font-size:13px; margin-bottom:18px;}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+  @media (max-width:640px){ .grid{grid-template-columns:1fr;} }
+  .card{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 18px; margin-bottom:14px;}
+  .card h2{font-size:15px; margin-bottom:10px; letter-spacing:.03em;}
+  .big{font-size:30px; font-weight:700;}
+  .big small{font-size:14px; color:var(--sub); font-weight:400;}
+  .bar{height:10px; background:#f0e9dc; border-radius:6px; overflow:hidden; margin:8px 0 6px;}
+  .bar > div{height:100%; background:var(--red); border-radius:6px;}
+  .bar.over > div{background:var(--warn);}
+  .meta{font-size:12.5px; color:var(--sub); line-height:1.7;}
+  .meta b{color:var(--ink);}
+  .warn-text{color:var(--warn); font-weight:700;}
+  .good-text{color:var(--good); font-weight:700;}
+  table{width:100%; border-collapse:collapse; font-size:13.5px;}
+  th,td{padding:7px 4px; border-bottom:1px solid var(--line); text-align:left;}
+  th{color:var(--sub); font-weight:600; font-size:12px;}
+  td.num, th.num{text-align:right; font-variant-numeric:tabular-nums;}
+  .settle{background:#eef4ff; border:1px solid #c7dbff;}
+  .settle .big{color:var(--blue);}
+  .chart{width:100%; height:auto; display:block;}
+  .legend{font-size:12px; color:var(--sub); display:flex; gap:16px; margin-top:6px;}
+  .legend .sw{display:inline-block; width:14px; height:10px; background:var(--red); border-radius:2px; vertical-align:middle; margin-right:5px;}
+  .legend .swl{display:inline-block; width:16px; border-top:3px dashed var(--blue); vertical-align:middle; margin-right:5px;}
+  .err{background:#fff1f1; border:1px solid #f3c2c2; color:#8c2b2b; padding:14px; border-radius:12px; font-size:13.5px;}
+  .targets{font-size:12px; color:var(--sub); margin-top:10px;}
+  .targets input{width:76px; padding:3px 6px; border:1px solid var(--line); border-radius:6px; font-size:12.5px;}
+  .targets button{padding:4px 10px; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; font-size:12.5px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>家計簿ダッシュボード</h1>
+    <div class="updated" id="updated">読み込み中…</div>
+  </header>
+  <p class="lead">Googleスプレッドシート「家計簿」の記録から自動計算しています。開くたびに最新データを取得します。</p>
+  <div id="app"></div>
+  <div id="error"></div>
+</div>
+<script>
+const SHEET_ID = "1qbglQTSzy5kGz3-nZnGTn-zq_NlNjd4Y2MbrCMWXSmU";
+const BUDGET_START = "2026-11-01"; // 予算を設定し始めた日（これより前の週は予算線なし）
+const DEFAULT_TARGETS = { foodMonthly: 45000, dailyMonthly: 12999, foodWeekly: 10000, dailyWeekly: 3000 };
+let targets = { ...DEFAULT_TARGETS };
+try {
+  const saved = JSON.parse(localStorage.getItem("kakeibo-targets") || "null");
+  if (saved) targets = { ...DEFAULT_TARGETS, ...saved };
+} catch (e) {}
+
+const yen = n => "¥" + Math.round(n).toLocaleString("ja-JP");
+const pad = n => String(n).padStart(2, "0");
+const fmtDate = d => d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+const fmtMD = d => (d.getMonth() + 1) + "/" + d.getDate();
+function mondayOf(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dow = (x.getDay() + 6) % 7; // Mon=0
+  x.setDate(x.getDate() - dow);
+  return x;
+}
+
+async function load() {
+  const url = "https://docs.google.com/spreadsheets/d/" + SHEET_ID + "/gviz/tq?tqx=out:json&sheet=" + encodeURIComponent("記録");
+  const res = await fetch(url);
+  const text = await res.text();
+  const json = JSON.parse(text.substring(text.indexOf("{"), text.lastIndexOf("}") + 1));
+  const recs = [];
+  for (const row of json.table.rows) {
+    const c = row.c;
+    if (!c || !c[0] || !c[0].v) continue;
+    const m = /^Date\((\d+),(\d+),(\d+)\)/.exec(String(c[0].v));
+    if (!m) continue;
+    const d = new Date(+m[1], +m[2], +m[3]);
+    recs.push({
+      date: d,
+      item: c[1] ? c[1].v : "",
+      name: c[2] ? (c[2].v || "") : "",
+      payer: c[3] ? c[3].v : "",
+      amount: c[4] ? (+c[4].v || 0) : 0
+    });
+  }
+  recs.sort((a, b) => a.date - b.date);
+  return recs;
+}
+
+function weeklySeries(recs, item) {
+  const map = new Map();
+  for (const r of recs) {
+    if (r.item !== item) continue;
+    const key = fmtDate(mondayOf(r.date));
+    map.set(key, (map.get(key) || 0) + r.amount);
+  }
+  const weeks = [...map.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1).slice(-10);
+  return weeks.map(([k, v]) => ({ start: new Date(k + "T00:00:00"), amount: v }));
+}
+
+function chartSVG(weeks, weeklyBudget) {
+  const W = 760, H = 190, PL = 8, PR = 8, PT = 18, PB = 24;
+  const maxV = Math.max(weeklyBudget || 0, ...weeks.map(w => w.amount), 1) * 1.15;
+  const iw = W - PL - PR, ih = H - PT - PB;
+  const bw = iw / weeks.length;
+  let s = "";
+  weeks.forEach((w, i) => {
+    const h = (w.amount / maxV) * ih;
+    const x = PL + i * bw + bw * 0.22, y = PT + ih - h, width = bw * 0.56;
+    s += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + width.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="3" fill="var(--red)"/>';
+    s += '<text x="' + (PL + i * bw + bw / 2) + '" y="' + (y - 4) + '" font-size="10.5" fill="#7a7264" text-anchor="middle">' + Math.round(w.amount / 100) / 10 + 'k</text>';
+    s += '<text x="' + (PL + i * bw + bw / 2) + '" y="' + (H - 6) + '" font-size="10.5" fill="#7a7264" text-anchor="middle">' + fmtMD(w.start) + '</text>';
+  });
+  // 予算線（予算開始日以降の週だけ結ぶ）
+  const pts = [];
+  weeks.forEach((w, i) => {
+    if (fmtDate(w.start) >= BUDGET_START) {
+      pts.push([PL + i * bw + bw / 2, PT + ih - (weeklyBudget / maxV) * ih]);
+    }
+  });
+  if (pts.length) {
+    const y = pts[0][1];
+    const x1 = pts[0][0] - bw * 0.28, x2 = pts[pts.length - 1][0] + bw * 0.28;
+    s += '<line x1="' + x1 + '" y1="' + y + '" x2="' + x2 + '" y2="' + y + '" stroke="var(--blue)" stroke-width="2.5" stroke-dasharray="7 5"/>';
+    pts.forEach(p => { s += '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="3.5" fill="var(--blue)"/>'; });
+    s += '<text x="' + x2 + '" y="' + (y - 6) + '" font-size="11" fill="var(--blue)" text-anchor="end" font-weight="700">週予算 ' + yen(weeklyBudget) + '</text>';
+  }
+  return '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '">' + s + '</svg>';
+}
+
+function render(recs) {
+  const now = new Date();
+  const cm = recs.filter(r => r.date.getFullYear() === now.getFullYear() && r.date.getMonth() === now.getMonth());
+  const sum = (arr, item) => arr.filter(r => !item || r.item === item).reduce((a, r) => a + r.amount, 0);
+  const total = sum(cm);
+  const byItem = {};
+  for (const r of cm) byItem[r.item] = (byItem[r.item] || 0) + r.amount;
+  const byPayer = {};
+  for (const r of cm) byPayer[r.payer] = (byPayer[r.payer] || 0) + r.amount;
+
+  const curWeekStart = mondayOf(now);
+  const weekSum = item => cm.filter(r => r.item === item && mondayOf(r.date).getTime() === curWeekStart.getTime()).reduce((a, r) => a + r.amount, 0);
+
+  function catCard(title, item, monthlyTarget, weeklyTarget) {
+    const used = byItem[item] || 0;
+    const pct = Math.min(100, used / monthlyTarget * 100);
+    const remain = monthlyTarget - used;
+    const wUsed = weekSum(item);
+    const wRemain = weeklyTarget - wUsed;
+    const weeks = weeklySeries(recs, item);
+    return '<div class="card"><h2>' + title + '（今月）</h2>' +
+      '<div class="big">' + yen(used) + ' <small>/ ' + yen(monthlyTarget) + '</small></div>' +
+      '<div class="bar' + (remain < 0 ? ' over' : '') + '"><div style="width:' + pct + '%"></div></div>' +
+      '<div class="meta">残り <b>' + yen(remain) + '</b>（消化 ' + Math.round(used / monthlyTarget * 100) + '%）<br>' +
+      '今週（' + fmtMD(curWeekStart) + '〜）：<b>' + yen(wUsed) + '</b> ／ 週予算 ' + yen(weeklyTarget) + ' → ' +
+      (wRemain >= 0 ? '<span class="good-text">残り ' + yen(wRemain) + '</span>' : '<span class="warn-text">' + yen(-wRemain) + ' オーバー</span>') + '</div>' +
+      chartSVG(weeks, weeklyTarget) +
+      '<div class="legend"><span><span class="sw"></span>各週の実績</span><span><span class="swl"></span>週予算（2026年11月以降）</span></div></div>';
+  }
+
+  // 精算
+  const payers = Object.keys(byPayer);
+  let settleHTML = "";
+  if (payers.length >= 2) {
+    const sorted = payers.slice().sort((a, b) => byPayer[b] - byPayer[a]);
+    const hi = sorted[0], lo = sorted[1];
+    const diff = byPayer[hi] - byPayer[lo];
+    if (diff === 0) {
+      settleHTML = '<div class="big" style="font-size:22px;">精算は不要</div><div class="meta">立て替えが同額です。</div>';
+    } else {
+      const amt = Math.round(diff / 2);
+      settleHTML = '<div class="meta">立て替え：' + payers.map(p => p + ' <b>' + yen(byPayer[p]) + '</b>').join("／") + '（差額 ' + yen(diff) + '）</div>' +
+        '<div class="big">' + lo + ' → ' + hi + ' へ ' + yen(amt) + '</div>' +
+        '<div class="meta">折半で精算した場合の金額です。</div>';
+    }
+  }
+
+  const itemRows = Object.entries(byItem).sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => '<tr><td>' + k + '</td><td class="num">' + yen(v) + '</td><td class="num">' + Math.round(v / total * 100) + '%</td></tr>').join("");
+  const recent = recs.slice(-10).reverse()
+    .map(r => '<tr><td>' + fmtMD(r.date) + '</td><td>' + r.item + '</td><td>' + (r.name || "") + '</td><td>' + r.payer + '</td><td class="num">' + yen(r.amount) + '</td></tr>').join("");
+
+  document.getElementById("app").innerHTML =
+    '<div class="card"><h2>今月の使用状況（' + (now.getMonth() + 1) + '月）</h2>' +
+    '<div class="big">' + yen(total) + '</div>' +
+    '<div class="meta">食料品＋日用品の月次予実は下のカードで項目別に見られます。</div></div>' +
+    '<div class="grid">' +
+    catCard("食料品", "食料品", targets.foodMonthly, targets.foodWeekly) +
+    catCard("日用品", "日用品", targets.dailyMonthly, targets.dailyWeekly) +
+    '</div>' +
+    '<div class="card"><h2>今月の内訳</h2><table><tr><th>項目</th><th class="num">金額</th><th class="num">割合</th></tr>' + itemRows + '</table></div>' +
+    '<div class="card settle"><h2>立て替え精算（今月）</h2>' + settleHTML + '</div>' +
+    '<div class="card"><h2>直近の記録</h2><table><tr><th>日付</th><th>項目</th><th>名前</th><th>支払元</th><th class="num">金額</th></tr>' + recent + '</table>' +
+    '<div class="targets">目標の変更（この端末にだけ保存されます）：' +
+    ' 食料品・月 <input id="t-foodMonthly" type="number" value="' + targets.foodMonthly + '">' +
+    ' 日用品・月 <input id="t-dailyMonthly" type="number" value="' + targets.dailyMonthly + '">' +
+    ' 食料品・週 <input id="t-foodWeekly" type="number" value="' + targets.foodWeekly + '">' +
+    ' 日用品・週 <input id="t-dailyWeekly" type="number" value="' + targets.dailyWeekly + '">' +
+    ' <button id="t-save">保存</button></div></div>';
+
+  document.getElementById("t-save").addEventListener("click", () => {
+    for (const k of Object.keys(DEFAULT_TARGETS)) {
+      const el = document.getElementById("t-" + k);
+      const v = parseInt(el.value, 10);
+      if (!isNaN(v) && v > 0) targets[k] = v;
+    }
+    localStorage.setItem("kakeibo-targets", JSON.stringify(targets));
+    render(recs);
+  });
+
+  document.getElementById("updated").textContent = "最終取得：" + now.toLocaleString("ja-JP") + "／記録 " + recs.length + " 件";
+}
+
+load().then(render).catch(e => {
+  document.getElementById("error").innerHTML = '<div class="err">データを読み込めませんでした。スプレッドシートの共有設定（リンクを知っている全員が閲覧可）が必要です。</div>';
+  document.getElementById("updated").textContent = "読み込み失敗";
+});
+</script>
+</body>
+</html>
