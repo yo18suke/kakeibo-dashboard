@@ -98,6 +98,15 @@
   .buddy.good .bubble::before{border-right-color:var(--line);}
   .buddy.pop img{animation:pop .3s ease;}
   @keyframes pop{0%{transform:scale(1);}40%{transform:scale(1.12) rotate(-3deg);}100%{transform:scale(1);}}
+  .mission{border:1.5px solid var(--line);}
+  .mission .m-head{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;}
+  .mission .m-title{font-size:14.5px; font-weight:700;}
+  .mission .m-val{font-size:13px; color:var(--sub);}
+  .mission .track > div{background:var(--salmon);}
+  .mission.fired{border-color:var(--salmon); background:#fff4ef;}
+  .mission.fired .m-title{font-family:var(--serif); font-size:19px; color:var(--warn);}
+  .mission.fired .m-body{font-size:14px; line-height:1.7; margin-top:6px;}
+  .mission.fired .m-house{font-size:42px; text-align:center; animation:pop .6s ease 2;}
   .err{background:#fff1f1; border:1px solid #f3c2c2; color:#8c2b2b; padding:14px; border-radius:12px; font-size:13.5px;}
 </style>
 </head>
@@ -545,6 +554,7 @@ function computeBuddy() {
       "記録が続いてるね。見える化できてるだけで前進だよ🌱"
     ];
   }
+  if (sumOf(DATA.recs) >= MISSION.threshold) msgs.unshift("ミッション発動！とばっちに家を買う時が来たよ🏠🎉");
   if (weekUsed === 0 && state !== "care") msgs.unshift("今週はまだ記録がないよ。最初の一件を入れたら週の予算が見えてくるよ📝");
   return { state, msgs };
 }
@@ -587,9 +597,26 @@ function renderTabs() {
   }));
 }
 
+const MISSION = { threshold: 1000000, title: "とばっちに家を買う" };
+function missionCard() {
+  const total = sumOf(DATA.recs);
+  const fired = total >= MISSION.threshold;
+  if (fired) {
+    return '<div class="card mission fired"><div class="m-house">🏠</div>' +
+      '<div class="m-title">🚨 ミッション発動！「' + MISSION.title + '」</div>' +
+      '<div class="m-body">累計の出費が ' + yen(total) + ' になり、' + yen(MISSION.threshold) + ' を超えました。約束どおり、とばっちに家を買う時が来ました。</div></div>';
+  }
+  const pct = Math.min(100, total / MISSION.threshold * 100);
+  return '<div class="card mission"><div class="m-head"><div class="m-title">🏠 ミッション：' + MISSION.title + '</div>' +
+    '<div class="m-val">発動まで あと ' + yen(MISSION.threshold - total) + '</div></div>' +
+    '<div class="track"><div style="width:' + pct + '%"></div></div>' +
+    '<div class="cap">累計の出費 ' + yen(total) + ' / ' + yen(MISSION.threshold) + '（' + pct.toFixed(1) + '%）。超えたらミッション発動！</div></div>';
+}
+
 function render() {
   renderTabs();
   if (selected === 'all') renderAll(); else renderMonth(selected);
+  document.getElementById("app").insertAdjacentHTML("afterbegin", missionCard());
   renderBuddy();
   const now = new Date();
   document.getElementById("fetched").textContent = "データ取得：" + (now.getMonth() + 1) + "/" + now.getDate() + " " + pad(now.getHours()) + ":" + pad(now.getMinutes()) + "（全" + DATA.recs.length + "件）";
